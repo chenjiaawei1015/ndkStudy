@@ -1,0 +1,150 @@
+Android 系统源码链接： http://pan.baidu.com/s/1o7GWq5W 密码：826x
+
+cpu 0101字符
+
+c/c++   ========= 二进制文件
+
+1. 编译
+	xxx.c  ------> windows .obj  语法 Linux .o
+	
+2. 链接
+	.o ----->  log.so 
+	
+	
+编译器：
+
+	编译规则：
+		Eclipse 
+			GUN  ----> Android.mk
+		Android Studio
+			LLVM ----> CMakeList.txt
+			
+			三段式
+cppFlags "-frtti -fexceptions"
+
+==========================================================================
+
+前言：
+	介绍android studio 工具的作用
+
+第一节
+	1. 讲解java native 关键字起的作用（10min）
+		Java Native Interface
+	前言：
+		我们知道cpu只认得“0101101”类似这种符号，C、C++这些代码最终都得通过编译、汇编成二进制代码，cpu才能识别
+		而Java比C、C++又多了一层虚拟机，过程也复杂许多,
+		Java代码经过编译成class文件、虚拟机装载等步骤最终在虚拟机中执行
+		class文件里面就是一个结构复杂的表，而最终告诉虚拟机怎么执行的就靠里面的字节码说明
+		
+		Java虚拟机在执行的时候，可以采用解释执行和编译执行的方式执行，但最终都是转化为机器码执行。
+		Java虚拟机运行时的数据区，包括方法区、虚拟机栈、堆、程序计数器、本地方法栈。
+		
+		问题:
+		按我们目前的理解，如果是解释执行，那么方法区中应该存的是字节码，
+		那执行的时候，通过JNI动态装载的c、c++库，怎么加载进来的？
+		
+			1. javac 与javap 处理 native方法
+				ACC_NATIVE
+				
+				普通的“add”方法是直接把字节码放到code属性表中
+				而native方法，与普通的方法通过一个标志“ACC_NATIVE”区分开来
+				
+				java在执行普通的方法调用的时候，可以通过找方法表，再找到相应的code属性表，最终解释执行代码
+				对于native方法，在class文件中，并没有体现native代码在哪里，只有一个“ACC_NATIVE”的标识
+				那么在执行的时候改怎么找到动态链接库的代码呢？
+			
+			2. System.loadLibrary()
+				---->Runtime.loadLibrary0
+					--->分两步：
+						----->1. 找到so库文件
+							两种方案：
+								1. ClassLoader
+									
+									通过打印，知道实际的ClassLoder是PathClassLoader
+									----->findLibrary
+											
+										---->this.pathList = new DexPathList(this, dexPath, libraryPath, optimizedDirectory);
+												
+											---->DexPathList.java
+												---->findLibrary
+													---->分析构造函数
+														解释路径
+										
+									2. ClassLoader为空
+											----->getLibPaths()
+												----->System.mapLibraryName //根据库类型 添加libxxx.so 还是xxx.dll
+											
+						----->2. 加载so库文件
+							----->Runtime.java 
+									---->doLoad(filename, loader);
+									----->//libcore/ojluni/src/main/native/Runtime.c
+										--->Runtime_nativeLoad
+										预留动态注册：
+											jniRegisterNativeMethods
+												JVM_NativeLoad
+											---->//art/runtime/openjdkjvm/OpenjdkJvm.cc
+												---->LoadNativeLibrary()
+													---->sym = library->FindSymbol("JNI_OnLoad", nullptr);//在我们要加载so库中查找JNI_OnLoad方法，如果没有系统就认为是静态注册方式进行的，直接返回true，代表so库加载成功，如果找到JNI_OnLoad就会调用JNI_OnLoad方法，JNI_OnLoad方法中一般存放的是方法注册的函数，所以如果采用动态注册就必须要实现JNI_OnLoad方法，否则调用java中申明的native方法时会抛出异常，下面有JNI_OnLoad的实现
+												----->JNI_OnLoadFn jni_on_load = reinterpret_cast<JNI_OnLoadFn>(sym);
+												----->IsBadJniVersion(version)
+													------>version != JNI_VERSION_1_2 && version != JNI_VERSION_1_4 && version != JNI_VERSION_1_6;
+														
+
+	
+	静态注册：
+	每个class都需要使用javah生成一个头文件，并且生成的名字很长书写不便
+	初次调用时需要依据名字搜索对应的JNI层函数来建立关联关系，会影响运行效率
+	用javah 生成头文件方便简单
+	
+	动态注册：
+	使用一种数据结构JNINativeMethod来记录java native函数和JNI函数的对应关系
+	移植方便（一个java文件中有多个native方法，java文件的包名更换后）
+
+
+synchronized void loadLibrary0(ClassLoader loader, String libname) {
+    if (libname.indexOf((int)File.separatorChar) != -1) {
+        throw new UnsatisfiedLinkError(
+"Directory separator should not appear in library name: " + libname);
+    }//判断传入的库名称是否合法，比如我们的库是libxxx.so,我们只需要传入xxx就可以了
+    String libraryName = libname;
+    if (loader != null) {//如果类加载器不为空
+        String filename = loader.findLibrary(libraryName);//查找是否存在我们需要的库文件
+        if (filename == null) {
+            // It's not necessarily true that the ClassLoader used
+            // System.mapLibraryName, but the default setup does, and it's
+            // misleading to say we didn't find "libMyLibrary.so" when we
+            // actually searched for "liblibMyLibrary.so.so".
+            throw new UnsatisfiedLinkError(loader + " couldn't find \"" +
+                                           System.mapLibraryName(libraryName) + "\"");
+        }//不存在库文件则抛出异常
+        String error = doLoad(filename, loader);//如果库文件存在，就加载
+        if (error != null) {
+            throw new UnsatisfiedLinkError(error);
+        }//加载库文件失败，抛出异常
+        return;
+}
+
+
+JNIEXPORT jstring JNICALL
+Runtime_nativeLoad(JNIEnv* env, jclass ignored, jstring javaFilename,
+                   jobject javaLoader, jstring javaLibrarySearchPath)
+{
+    return JVM_NativeLoad(env, javaFilename, javaLoader, javaLibrarySearchPath);//调用JVM_NativeLoad方法
+}//nativeLoad方法在本地的实现
+
+
+void register_java_lang_Runtime(JNIEnv* env) {
+  jniRegisterNativeMethods(env, "java/lang/Runtime", gMethods, NELEM(gMethods));
+}//注册gMethods中的方法，这个函数是直接由虚拟机调用
+
+
+typedef struct {  
+ const char* name; /*Java 中函数的名字*/  
+ const char* signature; /*描述了函数的参数和返回值*/  
+ void* fnPtr; /*函数指针,指向 C 函数*/  
+ } JNINativeMethod;
+	
+
+
+
+
