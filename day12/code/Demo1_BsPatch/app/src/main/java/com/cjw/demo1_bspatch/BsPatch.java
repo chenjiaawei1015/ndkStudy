@@ -6,6 +6,10 @@ package com.cjw.demo1_bspatch;
 
 public class BsPatch {
 
+    static {
+        System.loadLibrary("bspatch");
+    }
+
     public static native void patchFile(String oldPath, String newPath, String patchPath);
 
 }
